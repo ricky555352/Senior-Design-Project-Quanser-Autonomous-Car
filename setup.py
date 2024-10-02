@@ -38,7 +38,9 @@ setup(
             "vehiclecontrol    = qcar.vehiclecontrolnode:main",
             "detectinglanes    = qcar.detectinglanesnode:main",
             "trafficlight      = qcar.trafficlightnode:main",
-            'stopsignnode      = qcar.stopsignnode:main',
+            "stopsign          = qcar.stopsignnode:main",
+            "trafficlaw        = qcar.trafficlawnode:main",
+            "camera            = qcar.cameranode:main"
             ],
     },
 )

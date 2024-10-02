@@ -7,23 +7,25 @@ import numpy as np
 import time
 import cv2
 
+from std_msgs.msg import String
 from pal.products.qcar import QCarCameras, IS_PHYSICAL_QCAR
 
-# Used to enable killswitch 
-global KILL_THREAD
-KILL_THREAD = False
-
-def sig_handler(*args):
-    global KILL_THREAD
-    KILL_THREAD = True
-
-signal.signal(signal.SIGINT, sig_handler)
 
 class TrafficLightNode(Node):
     def __init__(self):
         super().__init__('green_light_node')
         self.get_logger().info("Green Light Detection Node Started")
+        self.subscription = self.create_subscription(
+            String,
+            'Raw_Camera_Image',
+            self.listener_callback,
+            10
+        )
 
+    def listener_callback(self, msg):
+        self.get_logger().info("Recieved {msg.data}")
+
+        '''
         self.declare_parameter('fps', 30)
         self.fps = self.get_parameter('fps').get_parameter_value().integer_value
         self.dt = 1.0 / self.fps
@@ -37,7 +39,9 @@ class TrafficLightNode(Node):
 
         # Set up a timer to process the camera feed at the desired frame rate
         self.timer = self.create_timer(self.dt, self.process_camera_feed)
-
+    '''
+    
+    '''
     def process_camera_feed(self):
         self.cameras.readAll()
         
@@ -61,7 +65,7 @@ class TrafficLightNode(Node):
         
         if cv2.waitKey(1) & 0xFF == ord('q'):
             rclpy.shutdown()
-
+    '''
     def process_image(self, img):
         hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
@@ -82,7 +86,7 @@ class TrafficLightNode(Node):
         else:
             self.get_logger().info("Light is red, stop!")
             self.stop_car()
-
+    '''
     def move_car_forward(self):
         # Placeholder for car movement logic
         # Replace with actual command to move the QCar forward
@@ -91,8 +95,9 @@ class TrafficLightNode(Node):
     def stop_car(self):
         # Placeholder for car stop logic
         # Replace with actual command to stop the QCar
+        u = 0
         self.get_logger().info("Stopping car...")
-
+    '''
 def main(args=None):
     rclpy.init(args=args)
     node = TrafficLightNode()

@@ -8,6 +8,7 @@ from pal.products.qcar import QCar, QCarGPS
 from pal.utilities.math import wrap_to_pi
 from hal.products.qcar import QCarEKF
 from hal.products.mats import SDCSRoadMap
+from std_msgs.msg import String, Bool
 
 DATA_TO_SAVE = [[]]
 
@@ -70,20 +71,29 @@ class VehicleControlNode(Node):
     def __init__(self, initialPosition, initialOrientation, nodeSequence):
         super().__init__('vehiclecontrol_node')
         self.get_logger().info("The car is starting!")
+        
+        self.subscription = self.create_subscription(
+            Bool,
+            'sign_status',
+            self.listener_callback,
+            10
+        )
 
         self.dt = 0.01  # How fast the car will update the timer
         self.startDelay = 1.0  # Delay before moving
         self.v_ref = 0.25  # Desired velocity in m/s
+        self.stop = False
 
         # Speed Controller
-        self.speedController = SpeedController(kp=0.1, ki=1)
-
+        self.speedController = SpeedController(kp=0.3, ki=1)
+        
+        
         # Waypoints for steering control with nodeSequence
         roadmap = SDCSRoadMap(leftHandTraffic=False, useSmallMap=True)
         waypointSequence = roadmap.generate_path(nodeSequence)
 
         # Steering Controller - tuned k value for better steering
-        self.steeringController = SteeringController(waypoints=waypointSequence, k=2.0)
+        self.steeringController = SteeringController(waypoints=waypointSequence, k=4)
 
         # QCar Interface with initial position and orientation
         self.qcar = QCar(readMode=1, frequency=20)
@@ -92,6 +102,9 @@ class VehicleControlNode(Node):
 
         self.t0 = time.time()
         self.timer = self.create_timer(self.dt, self.controlLoop)
+    
+    def listener_callback(self, msg):
+        self.stop = msg.data
 
     def controlLoop(self):
         qcar = self.qcar
@@ -120,8 +133,13 @@ class VehicleControlNode(Node):
             u = self.speedController.update(v, self.v_ref, self.dt)
             delta = self.steeringController.update(p, th, v)
 
+        if self.stop:
+            u = 0
+            delta = 0
+
         qcar.write(u, delta)
         
+        #print(str(x[0]) + "," + str(x[1]))
     # Function to stop the Qcar
     def stop_vehicle(self):
         self.get_logger().info("Stopping the vehicle...")
@@ -137,12 +155,13 @@ def main(args=None):
     rclpy.init(args=args)
 
     # Set initial position and orientation directly
-    initialPosition = [-1.28205, -0.45991, -0.7330382858376184]
-    initialOrientation = [0, 0, -44.7]
+    initialPosition = [0, 0.13, 0] # X = X position, Y = Y position, Z = radians
+    initialOrientation = [0, 0, -1.57] # Z = the angle in radians
 
     # Define the node sequence based on the map waypoints
-    nodeSequence = [10, 2, 4, 8, 10]  # Right-hand side driving with appropriate waypoints
-
+    nodeSequence = [0, 2, 4, 6, 8, 10]  # Right-hand side driving with appropriate waypoints
+    #nodeSequence = [2, 4, 6, 8, 10, 0] # Left-hand side driving around the track
+    
     # Initialize VehicleControlNode with the initial position, orientation, and node sequence
     node = VehicleControlNode(initialPosition=initialPosition, initialOrientation=initialOrientation, nodeSequence=nodeSequence)
 
