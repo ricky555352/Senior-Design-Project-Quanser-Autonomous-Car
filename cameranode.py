@@ -8,6 +8,7 @@ import numpy as np
 
 from std_msgs.msg import String
 from sensor_msgs.msg import Image
+from cv_bridge import CvBridge
 from pal.products.qcar import QCarCameras, IS_PHYSICAL_QCAR
 
 
@@ -19,9 +20,10 @@ class CameraNode(Node):
         #    self.publisher_light = self.create_publisher(String, 'light_status', 10)
         
         self.publisher_image = self.create_publisher(Image, 'Raw_Camera_Image', 10)
-
         
-        timer_period = 0.5
+        self.cap = cv2.VideoCapture(0)
+        self.br = CvBridge()
+        #timer_period = 0.5
         
         #self.timer_lane = self.create_timer(timer_period, self.timer_callback_detect_lanes)
 
@@ -48,9 +50,7 @@ class CameraNode(Node):
 
         self.count += 1
         self.get_logger().info(f"Publishing {msg.data}")
-    
 
-        
     def timer_callback_traffic_light(self, msg):
         msg = String()
         msg.data = f"Traffic Light Status: {self.count}"
@@ -62,7 +62,11 @@ class CameraNode(Node):
     def process_camera_feed(self):
         self.cameras.readAll()
         
-        imagedata = self.cameras.csiFront.imageData
+        # Display the stitched image
+        imageWidth = 640
+        imageHeight = 480
+        
+        #Image = self.cameras.csiFront.imageData
         #if imagedata is not None and imagedata.size > 0:
         #    self.process_image(imagedata)
         
@@ -73,17 +77,34 @@ class CameraNode(Node):
                                          self.cameras.csiFront.imageData),
                                          axis=1)
         
-        # Display the stitched image
-        imageWidth = 640
-        imageHeight = 480
-        cv2.imshow('Combined View', cv2.resize(imageBuffer360, (int(2*imageWidth), int(imageHeight/2))))
-        cv2.imshow("Front Camera", self.cameras.csiFront.imageData)
+        ret, frame = self.cap.read()
+        if ret == True:
+            self.publisher_image.publish(self.br.cv2_to_imgmsg(frame))
         
-        msg = Image()
-        msg.data = imagedata
-        msg.width = imageWidth
-        msg.height = imageHeight
-        self.publisher_image.publish(msg)
+        self.cameras.csiFront.imageData = self.br.imgmsg_to_cv2(Image)
+        
+        cv2.imshow('Combined View', cv2.resize(imageBuffer360, (int(2*imageWidth), int(imageHeight/2))))
+        cv2.imshow("Front Camera", self.cameras.csiFront.imagedata)
+        
+        # Wait for 1 millisecond
+        cv2.waitKey(1)
+
+    
+        #msg = Image()
+        #msg.data = imagedata
+        #msg.width = imageWidth
+        #msg.height = imageHeight
+        #self.publisher_image.publish(msg)
+        '''
+    def timer_callback(self):
+        ret, frame = self.cap.read()
+        if ret == True:
+            self.publisher_image.publish(self.br.cv2_to_imgmsg(frame))
+            
+    def img_callback(self, data):
+        current_frame = self.br.imgmsg_to_cv2(data)
+        cv2.imshow("camera", current_frame)
+        '''
         
 def main(args=None): #Main function
     rclpy.init(args=args) #Allows ROS2 to call script
