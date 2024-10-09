@@ -40,7 +40,11 @@ setup(
             "trafficlight      = qcar.trafficlightnode:main",
             "stopsign          = qcar.stopsignnode:main",
             "trafficlaw        = qcar.trafficlawnode:main",
-            "camera            = qcar.cameranode:main"
+            "camera            = qcar.cameranode:main",
+            "speed_controller  = qcar.speed_controller_node:main",
+            "steering_controller = qcar.steering_controller_node:main",
+            "hardware_control  = qcar.hardware_control_node:main",
+            "main_control = qcar.main_control_node:main"
             ],
     },
 )
