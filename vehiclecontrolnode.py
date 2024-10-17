@@ -3,6 +3,7 @@ import rclpy
 from rclpy.node import Node
 import numpy as np
 import time
+import csv  # For saving the data
 
 from pal.products.qcar import QCar, QCarGPS
 from pal.utilities.math import wrap_to_pi
@@ -10,7 +11,8 @@ from hal.products.qcar import QCarEKF
 from hal.products.mats import SDCSRoadMap
 from std_msgs.msg import String, Bool
 
-DATA_TO_SAVE = [[]]
+# To store the x and y data
+DATA_TO_SAVE = []
 
 class SpeedController:
     def __init__(self, kp=0, ki=0):
@@ -26,7 +28,7 @@ class SpeedController:
 
 
 class SteeringController:
-    def __init__(self, waypoints, k=1.5, cyclic=True):
+    def __init__(self, waypoints, k=0, cyclic=True):
         self.maxSteeringAngle = np.pi / 6
         self.wp = waypoints
         self.N = len(waypoints[0, :])
@@ -71,32 +73,25 @@ class VehicleControlNode(Node):
     def __init__(self, initialPosition, initialOrientation, nodeSequence):
         super().__init__('vehiclecontrol_node')
         self.get_logger().info("The car is starting!")
-        
-        self.subscription = self.create_subscription(
-            Bool,
-            'sign_status',
-            self.listener_callback,
-            10
-        )
 
         self.dt = 0.01  # How fast the car will update the timer
         self.startDelay = 1.0  # Delay before moving
-        self.v_ref = 0.25  # Desired velocity in m/s
+        self.v_ref = 0.2  # Desired velocity in m/s
         self.stop = False
 
         # Speed Controller
-        self.speedController = SpeedController(kp=0.3, ki=1)
-        
+        self.speedController = SpeedController(kp=0.2, ki=0.5)
         
         # Waypoints for steering control with nodeSequence
         roadmap = SDCSRoadMap(leftHandTraffic=False, useSmallMap=True)
         waypointSequence = roadmap.generate_path(nodeSequence)
 
         # Steering Controller - tuned k value for better steering
-        self.steeringController = SteeringController(waypoints=waypointSequence, k=4)
+        self.steeringController = SteeringController(waypoints=waypointSequence, k=1)
 
         # QCar Interface with initial position and orientation
         self.qcar = QCar(readMode=1, frequency=20)
+        #frequency when: 2 = 500, 20 = 50, 200 = 5
         self.ekf = QCarEKF(x_0=np.array([initialPosition[0], initialPosition[1], initialOrientation[2]]))
         self.gps = QCarGPS(initialPose=np.array([initialPosition[0], initialPosition[1], initialOrientation[2]]))
 
@@ -129,6 +124,9 @@ class VehicleControlNode(Node):
         v = qcar.motorTach
         t = time.time() - t0
 
+        # Log the x, y positions
+        DATA_TO_SAVE.append([x, y])
+
         if t >= self.startDelay:
             u = self.speedController.update(v, self.v_ref, self.dt)
             delta = self.steeringController.update(p, th, v)
@@ -138,8 +136,7 @@ class VehicleControlNode(Node):
             delta = 0
 
         qcar.write(u, delta)
-        
-        #print(str(x[0]) + "," + str(x[1]))
+
     # Function to stop the Qcar
     def stop_vehicle(self):
         self.get_logger().info("Stopping the vehicle...")
@@ -150,18 +147,27 @@ class VehicleControlNode(Node):
         """Called when shutting down the node, ensuring the car stops first."""
         self.stop_vehicle()  # Stop the vehicle before shutting down
         self.get_logger().info("Shutting down node...")
+        self.save_data()  # Save the x, y data to CSV file
+
+    # Save the collected x, y data to a CSV file
+    def save_data(self):
+        with open('Data3.csv', mode='w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(["x", "y"])
+            writer.writerows(DATA_TO_SAVE)
+        self.get_logger().info("Saving coordinates as CSV file")
+
 
 def main(args=None):
     rclpy.init(args=args)
 
     # Set initial position and orientation directly
-    initialPosition = [0, 0.13, 0] # X = X position, Y = Y position, Z = radians
-    initialOrientation = [0, 0, -1.57] # Z = the angle in radians
+    initialPosition = [0, 0.13, 0]  # X = X position, Y = Y position, Z = radians
+    initialOrientation = [0, 0, -1.57]  # Z = the angle in radians
 
     # Define the node sequence based on the map waypoints
-    nodeSequence = [0, 2, 4, 6, 8, 10]  # Right-hand side driving with appropriate waypoints
-    #nodeSequence = [2, 4, 6, 8, 10, 0] # Left-hand side driving around the track
-    
+    nodeSequence = [0, 4, 10, 1]  # Right-hand side driving with appropriate waypoints
+
     # Initialize VehicleControlNode with the initial position, orientation, and node sequence
     node = VehicleControlNode(initialPosition=initialPosition, initialOrientation=initialOrientation, nodeSequence=nodeSequence)
 
@@ -177,10 +183,6 @@ def main(args=None):
     # Stop the node
     node.destroy_node()
     rclpy.shutdown()
-
-    # Save data to file
-    np.savetxt("data3.csv", DATA_TO_SAVE, delimiter=",")
-
 
 if __name__ == '__main__':
     main()
