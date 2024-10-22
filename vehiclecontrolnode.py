@@ -78,9 +78,12 @@ class VehicleControlNode(Node):
         self.startDelay = 1.0  # Delay before moving
         self.v_ref = 0.2  # Desired velocity in m/s
         self.stop = False
+        self.steer_command = "go_straight"  # Default steering command
+        self.stop_detected = False  # Track if a stop sign is detected
+        self.stop_time = None  # Track the time when the stop sign was detected
 
         # Speed Controller
-        self.speedController = SpeedController(kp=0.2, ki=0.5)
+        self.speedController = SpeedController(kp=0.3, ki=0.5)
         
         # Waypoints for steering control with nodeSequence
         roadmap = SDCSRoadMap(leftHandTraffic=False, useSmallMap=True)
@@ -97,10 +100,35 @@ class VehicleControlNode(Node):
 
         self.t0 = time.time()
         self.timer = self.create_timer(self.dt, self.controlLoop)
-    
-    def listener_callback(self, msg):
-        self.stop = msg.data
 
+        # Subscribe to lane-keeping commands
+        self.lane_steering_subscriber = self.create_subscription(
+            String,
+            'lane_status',
+            self.lane_status_callback,
+            10
+        )
+        
+        # Subscriber to stop sign detection status
+        self.stop_sign_subscriber = self.create_subscription(
+            Bool,
+            'sign_status',
+            self.stop_sign_callback,
+            10
+        )
+
+    def lane_status_callback(self, msg):
+        # Update the steering command based on lane detection
+        self.steer_command = msg.data
+
+    def stop_sign_callback(self, msg):
+        if msg.data and not self.stop_detected:
+            self.get_logger().info("Stop sign detected, initiating stop sequence!")
+            self.stop_detected = True
+            self.stop_time = time.time()  # Record the time when the stop sign was detected
+        elif not msg.data and self.stop_detected:
+            self.get_logger().info("Stop sign no longer detected.")
+        
     def controlLoop(self):
         qcar = self.qcar
         gps = self.gps
@@ -131,10 +159,16 @@ class VehicleControlNode(Node):
             u = self.speedController.update(v, self.v_ref, self.dt)
             delta = self.steeringController.update(p, th, v)
 
-        if self.stop:
-            u = 0
-            delta = 0
+        # If a stop sign was detected, stop the vehicle for 3 seconds but continue to update steering
+        if self.stop_detected:
+            u = 0  # Set throttle to 0, so the car doesn't move
+            self.get_logger().info(f"Stopped. Time since stop: {time.time() - self.stop_time:.2f} seconds.")
 
+            # Check if 3 seconds have passed since the stop sign was detected
+            if time.time() - self.stop_time >= 3.0:
+                self.get_logger().info("Resuming after stop sign!")
+                self.stop_detected = False  # Allow the vehicle to resume
+                
         qcar.write(u, delta)
 
     # Function to stop the Qcar
