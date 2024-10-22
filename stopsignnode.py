@@ -2,85 +2,63 @@
 
 import rclpy
 from rclpy.node import Node
-
-import time
 import cv2
-#from cv_bridge import CvBridge
 import numpy as np
-from std_msgs.msg import String, Bool
-from sensor_msgs.msg import Image
-from pal.products.qcar import QCarCameras, QCar, IS_PHYSICAL_QCAR
+from std_msgs.msg import Bool
+from sensor_msgs.msg import CompressedImage
+from cv_bridge import CvBridge
 
 class StopSignNode(Node):
     def __init__(self):
         super().__init__('stop_sign_node')
+
+        self.get_logger().info("Stop Sign Node has started and subscribed to the camera feed.")
         
+        # Initialize CvBridge for converting ROS images to OpenCV
+        self.bridge = CvBridge()
+
+        # Publisher for stop sign detection status
         self.publisher_sign = self.create_publisher(Bool, 'sign_status', 10)
-    #    timer_period = 0.5
-    #    self.timer_sign = self.create_timer(timer_period, self.timer_callback_stop_sign)
-                
-        self.get_logger().info("Stop Sign Node has started.")
+        
+        # Subscriber to compressed image topic from the camera
         self.subscription = self.create_subscription(
-            Image,
-            'Raw_Camera_Image',
+            CompressedImage,
+            '/qcar/csi_front',  # Topic published by CameraNode
             self.listener_callback,
             10
         )
-        self.img = []
-
-    #def timer_callback_stop_sign(self):
-        #msg = Bool()
-        #msg.data = self.detect_stop_sign(self, self.img)
-        #self.publisher_sign.publish(msg)
-        #self.count += 1
-        #self.get_logger().info(f"Publishing {msg.data}")
-        
+    
     def listener_callback(self, msg):
-        self.get_logger().info("Recieved {msg.data}")
-        #self.img = msg.data
+        # Convert the incoming ROS image to OpenCV format
+        self.get_logger().info("Received image for stop sign detection")
+        cv_image = self.bridge.compressed_imgmsg_to_cv2(msg, desired_encoding='bgr8')
         
-        msg = Bool()
-        msg.data = self.detect_stop_sign(self, msg.data)
-        self.publisher_sign.publish(msg)
+        # Check if a stop sign is detected in the image
+        detected = self.detect_stop_sign(cv_image)
+        stop_status = Bool()
         
-        '''
-        # Initialize QCar Cameras
-        self.cameras = QCarCameras(
-            enableBack=False,
-            enableFront=True,
-            enableLeft=False,
-            enableRight=False,
-        )
+        if detected:
+            self.get_logger().info("Stop sign detected!")
+            stop_status.data = True
+        else:
+            self.get_logger().info("No stop sign detected.")
+            stop_status.data = False
+        
+        # Publish the stop sign detection result
+        self.publisher_sign.publish(stop_status)
 
-        # Initialize QCar control for stopping and moving forward
-        self.qcar = QCar()
-
-        # Frequency of the camera feed processing (30 FPS)
-        self.fps = 30
-        self.frame_time = 1.0 / self.fps
-
-        # Create a ROS 2 timer to trigger the camera feed processing
-        self.timer = self.create_timer(self.frame_time, self.camera_feed)
-        '''
-    '''
-    def camera_feed(self):
-        # Capture RGB Image from the QCar's front camera
-        self.cameras.readAll()
-        imagedata = self.cameras.csiFront.imageData
-
-        if imagedata is not None and imagedata.size > 0:
-            # Process the image to detect stop signs
-            processed_frame = self.process_frame(imagedata)
-            cv2.imshow("Processed Frame", processed_frame)
-
-            # To quit display, press 'q'
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                self.get_logger().info("Exiting the display.")
-                cv2.destroyAllWindows()
-    '''
     def detect_stop_sign(self, img):
-        # Convert image to HSV color space
-        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        height, width, _ = img.shape
+        
+        # Define two ROIs: one on the left and one on the right side of the image
+        roi_left = img[int(height * 0.3):int(height * 0.7), 0:int(width * 0.3)]  # Left 30% of the image
+        roi_right = img[int(height * 0.3):int(height * 0.7), int(width * 0.7):width]  # Right 30% of the image
+
+        # Combine both ROIs into one image for easier processing
+        roi_combined = np.hstack((roi_left, roi_right))
+
+        # Convert ROI to HSV color space for color filtering
+        hsv = cv2.cvtColor(roi_combined, cv2.COLOR_BGR2HSV)
 
         # Define range for red color in HSV (for stop sign detection)
         lower_red1 = np.array([0, 70, 50])
@@ -94,55 +72,47 @@ class StopSignNode(Node):
         red_mask = cv2.bitwise_or(mask1, mask2)
 
         # Find contours in the red mask
-        contours, _ = cv2.findContours(red_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        contours = cv2.findContours(red_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)[-2]
 
-        # Loop over contours
+        # Loop over contours to find octagonal shapes
         for cnt in contours:
-            approx = cv2.approxPolyDP(cnt, 0.04 * cv2.arcLength(cnt, True), True)
+            approx = cv2.approxPolyDP(cnt, 0.02 * cv2.arcLength(cnt, True), True)
 
-            # Check if the contour has 8 vertices (octagon shape) and is sufficiently large
-            if len(approx) == 8 and cv2.contourArea(cnt) > 1000:
+            # Check if the contour has 8 vertices (octagon shape)
+            if len(approx) == 8:
                 x, y, w, h = cv2.boundingRect(cnt)
                 aspect_ratio = w / float(h)
-                if 0.8 <= aspect_ratio <= 1.2:  # Check if the bounding box is roughly square
-                    # Draw a bounding box around the detected stop sign
-                    cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                    return True  # Stop sign detected
+                area = cv2.contourArea(cnt)
+
+                # Ensure the contour is roughly square-shaped, has a reasonable area, and is octagonal
+                if 0.8 <= aspect_ratio <= 1.2 and 1000 < area < 10000:  # Adjust size constraints as needed
+                    # Further refine the shape detection by using the solidity check (area vs convex hull area)
+                    hull = cv2.convexHull(cnt)
+                    hull_area = cv2.contourArea(hull)
+                    if hull_area > 0:
+                        solidity = area / float(hull_area)
+                        if solidity > 0.9:  # The object should be solid and convex
+                            cv2.rectangle(roi_combined, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                            cv2.imshow("Detected Stop Sign", roi_combined)  # Optional, for debugging
+                            cv2.waitKey(1)
+                            return True  # Stop sign detected with octagon shape and correct text
         return False  # No stop sign detected
 
-    def process_frame(self, img):
-        if self.detect_stop_sign(img):
-            self.get_logger().info("Stop sign detected! Stopping...")
-            self.stop_car()
-            time.sleep(3)  # Stop for 3 seconds
-            self.get_logger().info("Resuming movement...")
-            self.move_car_forward()
-        else:
-            self.get_logger().info("No stop sign detected. Moving forward.")
-            self.move_car_forward()
-        return img
-    '''
-    def stop_car(self):
-        self.get_logger().info("Stopping the QCar.")
-        # Issue the stop command to the QCar
-        self.qcar.stop()
+    def stop_node(self):
+        self.get_logger().info("Shutting down Stop Sign Node...")
+        cv2.destroyAllWindows()
 
-    def move_car_forward(self):
-        self.get_logger().info("Moving the QCar forward.")
-        # Issue the forward command to the QCar with speed 0.2 m/s
-        self.qcar.forward(0.2)
-    '''
 def main(args=None):
     rclpy.init(args=args)  # Initialize ROS 2 Python library
     node = StopSignNode()
     try:
         rclpy.spin(node)  # Keep the node running
     except KeyboardInterrupt:
-        node.get_logger().info("Stop sign node stopped manually.")
+        node.get_logger().info("Stop Sign Node stopped manually.")
     finally:
+        node.stop_node()
         node.destroy_node()
         rclpy.shutdown()
-
 
 if __name__ == '__main__':
     main()
