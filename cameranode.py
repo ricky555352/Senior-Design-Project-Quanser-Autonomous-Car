@@ -1,121 +1,72 @@
 #!/usr/bin/env python3
-# -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- --
 
 import rclpy
 from rclpy.node import Node
+from sensor_msgs.msg import CompressedImage
+from cv_bridge import CvBridge
 import cv2
 import numpy as np
-
-from std_msgs.msg import String
-from sensor_msgs.msg import Image
-from cv_bridge import CvBridge
-from pal.products.qcar import QCarCameras, IS_PHYSICAL_QCAR
-
+from pal.products.qcar import QCarCameras
 
 class CameraNode(Node):
     def __init__(self):
         super().__init__('camera_node')
-        #    self.publisher_lane = self.create_publisher(String, 'lane_status', 10)
 
-        #    self.publisher_light = self.create_publisher(String, 'light_status', 10)
-        
-        self.publisher_image = self.create_publisher(Image, 'Raw_Camera_Image', 10)
-        
-        self.cap = cv2.VideoCapture(0)
-        self.br = CvBridge()
-        #timer_period = 0.5
-        
-        #self.timer_lane = self.create_timer(timer_period, self.timer_callback_detect_lanes)
+        # Create a publisher to publish the front camera image
+        self.publisher_image = self.create_publisher(CompressedImage, '/qcar/csi_front', 10)  # Keep this topic consistent
 
-        #self.timer_light = self.create_timer(timer_period, self.timer_callback_traffic_light)
-        
-        self.count = 0
+        # Use CvBridge to convert between ROS2 Image messages and OpenCV images
+        self.bridge = CvBridge()
 
-        self.declare_parameter('fps', 30)
-        self.fps = self.get_parameter('fps').get_parameter_value().integer_value
-        self.dt = 1.0 / self.fps
-
+        # Set up the QCar cameras
         self.cameras = QCarCameras(
-            enableBack=True,
+            enableBack=False,  # You can enable other cameras if needed
             enableFront=True,
-            enableLeft=True,
-            enableRight=True,
+            enableLeft=False,
+            enableRight=False,
         )
+
+        # Get the FPS from parameters or default to 30 FPS
+        #self.declare_parameter('fps', 30)
+        #self.fps = self.get_parameter('fps').get_parameter_value().integer_value
+        self.fps = 30
+        self.dt = 1.0 / self.fps  # Time between frames
 
         # Set up a timer to process the camera feed at the desired frame rate
         self.timer = self.create_timer(self.dt, self.process_camera_feed)
-    
-    '''
-    def timer_callback_detect_lanes(self, msg):
 
-        self.count += 1
-        self.get_logger().info(f"Publishing {msg.data}")
-
-    def timer_callback_traffic_light(self, msg):
-        msg = String()
-        msg.data = f"Traffic Light Status: {self.count}"
-        self.publisher_light.publish(msg)
-        self.count += 1
-        self.get_logger().info(f"Publishing {msg.data}")
-        
-    '''
     def process_camera_feed(self):
+        # Read from the front camera
         self.cameras.readAll()
-        
-        # Display the stitched image
-        imageWidth = 640
-        imageHeight = 480
-        
-        #Image = self.cameras.csiFront.imageData
-        #if imagedata is not None and imagedata.size > 0:
-        #    self.process_image(imagedata)
-        
-        # Stitch images together with black padding
-        imageBuffer360 = np.concatenate((self.cameras.csiRight.imageData,
-                                         self.cameras.csiBack.imageData,
-                                         self.cameras.csiLeft.imageData,
-                                         self.cameras.csiFront.imageData),
-                                         axis=1)
-        
-        ret, frame = self.cap.read()
-        if ret == True:
-            self.publisher_image.publish(self.br.cv2_to_imgmsg(frame))
-        
-        self.cameras.csiFront.imageData = self.br.imgmsg_to_cv2(Image)
-        
-        cv2.imshow('Combined View', cv2.resize(imageBuffer360, (int(2*imageWidth), int(imageHeight/2))))
-        cv2.imshow("Front Camera", self.cameras.csiFront.imagedata)
-        
-        # Wait for 1 millisecond
-        cv2.waitKey(1)
+        front_image = self.cameras.csiFront.imageData
 
-    
-        #msg = Image()
-        #msg.data = imagedata
-        #msg.width = imageWidth
-        #msg.height = imageHeight
-        #self.publisher_image.publish(msg)
-        '''
-    def timer_callback(self):
-        ret, frame = self.cap.read()
-        if ret == True:
-            self.publisher_image.publish(self.br.cv2_to_imgmsg(frame))
-            
-    def img_callback(self, data):
-        current_frame = self.br.imgmsg_to_cv2(data)
-        cv2.imshow("camera", current_frame)
-        '''
-        
-def main(args=None): #Main function
-    rclpy.init(args=args) #Allows ROS2 to call script
-    
-    node = CameraNode() #Node shall equal the class name node
-    rclpy.spin(node) #Spin function will force the node to run indefinitely until user forcefully kills node
-    
-    # Stops node
-    node.destroy_node()
-    rclpy.shutdown() #Allows ^C to kill node if not ran with lidar or engine
+        # Check if the front camera image data is valid
+        if front_image is not None and front_image.size > 0:
+            # Publish the front camera image in compressed format
+            compressed_image_msg = self.bridge.cv2_to_compressed_imgmsg(front_image, dst_format='jpeg')
+            compressed_image_msg.header.stamp = self.get_clock().now().to_msg()
+            compressed_image_msg.header.frame_id = 'qcar_front_camera'
+            self.publisher_image.publish(compressed_image_msg)
 
-if __name__ == '__main__': #Main function that ROS2 will call as the node
+            # Optional: Display the image using OpenCV for testing purposes
+            cv2.imshow("Front Camera", front_image)
+            cv2.waitKey(1)
+
+    def stop_camera(self):
+        self.get_logger().info("Shutting down camera...")
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = CameraNode()
+
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        node.get_logger().info("Camera node stopped manually.")
+    finally:
+        node.stop_camera()
+        node.destroy_node()
+        rclpy.shutdown()
+
+if __name__ == '__main__':
     main()
-#endregion 
