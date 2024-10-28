@@ -2,102 +2,89 @@
 
 import rclpy
 from rclpy.node import Node
-import signal
-import numpy as np
-import time
 import cv2
-
-from std_msgs.msg import String
-from pal.products.qcar import QCarCameras, IS_PHYSICAL_QCAR
+import numpy as np
+from sensor_msgs.msg import CompressedImage
+from std_msgs.msg import Bool
+from cv_bridge import CvBridge
 
 
 class TrafficLightNode(Node):
     def __init__(self):
-        super().__init__('green_light_node')
-        self.get_logger().info("Green Light Detection Node Started")
+        super().__init__('traffic_light_node')
+        self.bridge = CvBridge()
+        self.publisher_sign = self.create_publisher(Bool, 'light_status', 10)
+        
+        # Subscribe to the camera's image topic
         self.subscription = self.create_subscription(
-            String,
-            'Raw_Camera_Image',
+            CompressedImage,
+            '/qcar/csi_front',
             self.listener_callback,
             10
         )
 
     def listener_callback(self, msg):
-        self.get_logger().info("Recieved {msg.data}")
+        # Convert incoming ROS image to OpenCV format
+        cv_image = self.bridge.compressed_imgmsg_to_cv2(msg, desired_encoding='bgr8')
 
-        '''
-        self.declare_parameter('fps', 30)
-        self.fps = self.get_parameter('fps').get_parameter_value().integer_value
-        self.dt = 1.0 / self.fps
+        # Detect traffic light color (check green first, then red)
+        detected_green = self.detect_green_light(cv_image)
+        detected_red = self.detect_red_light(cv_image) if not detected_green else False
 
-        self.cameras = QCarCameras(
-            enableBack=True,
-            enableFront=True,
-            enableLeft=True,
-            enableRight=True,
-        )
+        # Prepare the message based on detection results
+        light_status = Bool()
+        if detected_green:
+            self.get_logger().info("Green light detected!")
+            light_status.data = False  # Go
+        elif detected_red:
+            self.get_logger().info("Red light detected!")
+            light_status.data = True  # Stop
+        else:
+            self.get_logger().info("No clear traffic light detected.")
+            return  # Do not publish if light is unclear
 
-        # Set up a timer to process the camera feed at the desired frame rate
-        self.timer = self.create_timer(self.dt, self.process_camera_feed)
-    '''
-    
-    '''
-    def process_camera_feed(self):
-        self.cameras.readAll()
-        
-        imagedata = self.cameras.csiFront.imageData
-        if imagedata is not None and imagedata.size > 0:
-            self.process_image(imagedata)
-        
-        # Stitch images together with black padding
-        imageBuffer360 = np.concatenate((self.cameras.csiRight.imageData,
-                                         self.cameras.csiBack.imageData,
-                                         self.cameras.csiLeft.imageData,
-                                         self.cameras.csiFront.imageData),
-                                         axis=1)
-        
-        # Display the stitched image
-        imageWidth = 640
-        imageHeight = 480
-        
-        cv2.imshow('Combined View', cv2.resize(imageBuffer360, (int(2*imageWidth), int(imageHeight/2))))
-        cv2.imshow("frame", self.cameras.csiFront.imageData)
-        
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            rclpy.shutdown()
-    '''
-    def process_image(self, img):
+        # Publish the light status
+        self.publisher_sign.publish(light_status)
+
+    def detect_red_light(self, img):
         hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
-        # Lower and upper range of green stoplight color in HSV
-        hsv_green_lower = (50, 160, 200)
-        hsv_green_upper = (70, 255, 255)
+        # Adjusted red color range in HSV
+        hsv_red_lower1 = (0, 120, 100)
+        hsv_red_upper1 = (10, 255, 255)
+        hsv_red_lower2 = (160, 120, 100)
+        hsv_red_upper2 = (180, 255, 255)
 
-        # Mask with the range of greens for stoplight color
-        mask = cv2.inRange(hsv_img, hsv_green_lower, hsv_green_upper)
+        # Create masks for both red ranges
+        mask1 = cv2.inRange(hsv_img, hsv_red_lower1, hsv_red_upper1)
+        mask2 = cv2.inRange(hsv_img, hsv_red_lower2, hsv_red_upper2)
+        red_mask = cv2.bitwise_or(mask1, mask2)
 
-        # Only show the pixels that contain the stoplight color
-        color_image = cv2.bitwise_and(img, img, mask=mask)
+        # Log the area of red light detection to help adjust threshold
+        red_area = np.sum(red_mask)
+        self.get_logger().info(f"Red light area: {red_area}")
 
-        # Check if the average of the green pixels is above a threshold
-        if np.average(color_image) >= 0.0004:
-            self.get_logger().info("Light is green, go!")
-            self.move_car_forward()
-        else:
-            self.get_logger().info("Light is red, stop!")
-            self.stop_car()
-    '''
-    def move_car_forward(self):
-        # Placeholder for car movement logic
-        # Replace with actual command to move the QCar forward
-        self.get_logger().info("Moving car forward...")
+        # Increase threshold to reduce false positives
+        return red_area > 400  # Adjust this threshold to suit your environment
 
-    def stop_car(self):
-        # Placeholder for car stop logic
-        # Replace with actual command to stop the QCar
-        u = 0
-        self.get_logger().info("Stopping car...")
-    '''
+    def detect_green_light(self, img):
+        hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+
+        # Adjusted green color range in HSV based on previous analysis
+        hsv_green_lower = (16, 50, 84)
+        hsv_green_upper = (32, 255, 255)
+
+        # Create mask for green
+        green_mask = cv2.inRange(hsv_img, hsv_green_lower, hsv_green_upper)
+
+        # Log the area of green light detection to help adjust threshold
+        green_area = np.sum(green_mask)
+        self.get_logger().info(f"Green light area: {green_area}")
+
+        # Detect green light presence with adjusted threshold
+        return green_area > 150  # Adjust this threshold if necessary
+
+
 def main(args=None):
     rclpy.init(args=args)
     node = TrafficLightNode()
