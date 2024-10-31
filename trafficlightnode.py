@@ -29,7 +29,8 @@ class TrafficLightNode(Node):
 
         # Detect traffic light color (check green first, then red)
         detected_green = self.detect_green_light(cv_image)
-        detected_red = self.detect_red_light(cv_image) if not detected_green else False
+        #detected_red = self.detect_red_light(cv_image) if not detected_green else False
+        detected_red = self.detect_red_light(cv_image)
 
         # Prepare the message based on detection results
         light_status = Bool()
@@ -67,22 +68,50 @@ class TrafficLightNode(Node):
         # Increase threshold to reduce false positives
         return red_area > 400  # Adjust this threshold to suit your environment
 
-    def detect_green_light(self, img):
-        hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-
-        # Adjusted green color range in HSV based on previous analysis
-        hsv_green_lower = (16, 50, 84)
-        hsv_green_upper = (32, 255, 255)
-
-        # Create mask for green
-        green_mask = cv2.inRange(hsv_img, hsv_green_lower, hsv_green_upper)
-
+    def detect_green_light(self, image):
+        hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        
+        lower_green = np.array([55, 100, 100])
+        upper_green = np.array([65, 255, 255])
+        
+        green_mask = cv2.inRange(hsv_image, lower_green, upper_green)
+        
+        green_image = cv2.bitwise_and(image, image, mask=green_mask)
+        
+        #_, thresh = cv2.threshold(green_image, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        #contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # for contour in contours:
+        #     area = cv2.contourArea(contour)
+        #     if area > 1000 and cv2.arcLength(contour, True) > 20:
+        #         x, y, w, h = cv2.boundingRect(contour)
+                
+    
         # Log the area of green light detection to help adjust threshold
-        green_area = np.sum(green_mask)
+        green_area = np.sum(green_image)
         self.get_logger().info(f"Green light area: {green_area}")
 
         # Detect green light presence with adjusted threshold
-        return green_area > 150  # Adjust this threshold if necessary
+        return green_area > 300  # Adjust this threshold if necessary        
+                
+                
+        # Refine the contour further if needed
+        # hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+
+        # # Adjusted green color range in HSV based on previous analysis
+        # hsv_green_lower = (55, 100, 100) # 108, 99, 62
+        # hsv_green_upper = (65, 255, 255)
+
+        # # Create mask for green
+        # #green_mask = cv2.inRange(hsv_img, hsv_green_lower, hsv_green_upper)
+        # green_mask = cv2.bitwise_and(hsv_img, hsv_green_lower, hsv_green_upper)
+
+        # # Log the area of green light detection to help adjust threshold
+        # green_area = np.sum(green_mask)
+        # self.get_logger().info(f"Green light area: {green_area}")
+
+        # # Detect green light presence with adjusted threshold
+        # return green_area > 300  # Adjust this threshold if necessary
 
 
 def main(args=None):
