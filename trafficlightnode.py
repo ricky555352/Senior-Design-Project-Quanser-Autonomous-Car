@@ -60,12 +60,12 @@ class TrafficLightNode(Node):
         # Apply Gaussian blur to reduce noise and smooth the edges of the mask
         blurred_mask = cv2.GaussianBlur(red_mask, (9, 9), 2)
 
-        # Define minimum area threshold for red detection
-        min_red_area = 300  # Adjust based on camera view at 6 inches
+        # Define area threshold for red detection
+        red_area = 300  
 
         # Check if the red mask area is above the threshold
         red_area = cv2.countNonZero(blurred_mask)
-        if red_area < min_red_area:
+        if red_area < red_area:
             # Area too small, likely not the traffic light
             return False
 
