@@ -33,8 +33,22 @@ class StopSignNode(Node):
         self.get_logger().info("Received image for stop sign detection")
         cv_image = self.bridge.compressed_imgmsg_to_cv2(msg, desired_encoding='bgr8')
         
-        # Check if a stop sign is detected in the image
-        detected = self.detect_stop_sign(cv_image)
+        height, width, _ = cv_image.shape
+        
+        # Define two ROIs: one on the left and one on the right side of the image
+        roi_x_start = int(width * 0.0)    # Start at 0% from the left
+        roi_x_end = int(width * 1.0)      # End at 100% from the right
+        roi_y_start = int(height * 0.3)   # Start at 30% from the top
+        roi_y_end = int(height * 0.7)     # End at 70% from the top
+        
+        # Extract the ROI from the image
+        roi = cv_image[roi_y_start:roi_y_end, roi_x_start:roi_x_end]
+
+        # Draw a yellow rectangle around the ROI for debugging
+        cv2.rectangle(cv_image, (roi_x_start, roi_y_start), (roi_x_end, roi_y_end), (0, 255, 255), 2)
+
+        # Check if a stop sign is detected in the ROI
+        detected = self.detect_stop_sign(roi)
         stop_status = Bool()
         
         if detected:
@@ -47,18 +61,13 @@ class StopSignNode(Node):
         # Publish the stop sign detection result
         self.publisher_sign.publish(stop_status)
 
+        # Display the ROI on the full image with the yellow rectangle
+        cv2.imshow("Stop Sign Detection with ROI", cv_image)
+        cv2.waitKey(1)
+
     def detect_stop_sign(self, img):
-        height, width, _ = img.shape
-        
-        # Define two ROIs: one on the left and one on the right side of the image
-        roi_left = img[int(height * 0.3):int(height * 0.7), 0:int(width * 0.3)]  # Left 30% of the image
-        roi_right = img[int(height * 0.3):int(height * 0.7), int(width * 0.7):width]  # Right 30% of the image
-
-        # Combine both ROIs into one image for easier processing
-        roi_combined = np.hstack((roi_left, roi_right))
-
         # Convert ROI to HSV color space for color filtering
-        hsv = cv2.cvtColor(roi_combined, cv2.COLOR_BGR2HSV)
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
 
         # Define range for red color in HSV (for stop sign detection)
         lower_red1 = np.array([0, 70, 50])
@@ -92,8 +101,8 @@ class StopSignNode(Node):
                     if hull_area > 0:
                         solidity = area / float(hull_area)
                         if solidity > 0.9:  # The object should be solid and convex
-                            cv2.rectangle(roi_combined, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                            cv2.imshow("Detected Stop Sign", roi_combined)  # Optional, for debugging
+                            cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                            cv2.imshow("Detected Stop Sign", img)  # Optional, for debugging
                             cv2.waitKey(1)
                             return True  # Stop sign detected with octagon shape and correct text
         return False  # No stop sign detected
@@ -103,10 +112,10 @@ class StopSignNode(Node):
         cv2.destroyAllWindows()
 
 def main(args=None):
-    rclpy.init(args=args)  # Initialize ROS 2 Python library
+    rclpy.init(args=args)
     node = StopSignNode()
     try:
-        rclpy.spin(node)  # Keep the node running
+        rclpy.spin(node)
     except KeyboardInterrupt:
         node.get_logger().info("Stop Sign Node stopped manually.")
     finally:

@@ -9,7 +9,7 @@ from pal.products.qcar import QCar, QCarGPS, QCarLidar
 from pal.utilities.math import wrap_to_pi
 from hal.products.qcar import QCarEKF
 from hal.products.mats import SDCSRoadMap
-from std_msgs.msg import String, Bool
+from std_msgs.msg import Bool
 
 # To store the x, y, and waypoint data
 DATA_TO_SAVE = []
@@ -118,11 +118,11 @@ class VehicleControlNode(Node):
     def stop_sign_callback(self, msg):
         if msg.data and not self.stop_detected:
             self.get_logger().info("Stop sign detected, initiating stop sequence!")
-            self.stop_detected = True
+            self.stop_detected = msg.data  # true
             self.stop_time = time.time()
         elif not msg.data and self.stop_detected:
             self.get_logger().info("Stop sign no longer detected.")
-            self.stop_detected = False
+            self.stop_detected = msg.data # false
 
     def red_light_callback(self, msg):
         # Debounce red light detection
@@ -157,34 +157,40 @@ class VehicleControlNode(Node):
         # Log QCar position and waypoint position
         DATA_TO_SAVE.append([x, y, wp_1_x, wp_1_y])
         
-        # Control the QCar based on the red light status
+        # Handle stopping for red light
         if self.red_light_detected:
             # Stop the car if red light is detected
             u = 0
             delta = 0
             self.qcar.write(u, delta)
             self.get_logger().info("Red light detected: Stopping the vehicle.")
-        else:
-            # If green light is detected, start gradually increasing speed
-            target_speed = self.v_ref  # Desired speed
-            current_speed = v
-            u = self.speedController.update(current_speed, target_speed, self.dt)
-            delta = self.steeringController.update(p, th, current_speed)
-            self.qcar.write(u, delta)
-            self.get_logger().info("Green light detected: Moving towards waypoint.")
+            return  # Exit control loop to ensure the car stays stopped
 
-        # If a stop sign was detected, stop the vehicle for 3 seconds
+        # Handle stopping for 3 seconds at the stop sign
         if self.stop_detected:
-            self.qcar.write(0, 0)
-            if time.time() - self.stop_time >= 3.0:
+            u = 0
+            delta = 0
+            self.timer_start = time.time()
+            self.get_logger().info("Waiting at stop sign...")
+            self.qcar.write(u, delta)
+        else:
+            self.timer_end = time.time()
+            if (self.timer_end - self.timer_start) >= 3.0:
                 self.get_logger().info("Resuming after stop sign!")
                 self.stop_detected = False
+            return
+            
+        # Control QCar to follow the waypoints
+        target_speed = self.v_ref
+        current_speed = v
+        u = self.speedController.update(current_speed, target_speed, self.dt)
+        delta = self.steeringController.update(p, th, current_speed)
+        self.qcar.write(u, delta)
+        self.get_logger().info("Following waypoint path.")
 
     def stop_vehicle(self):
         self.get_logger().info("Stopping the vehicle...")
-        self.qcar.write(0.0, 0.0)
-        QCarLidar().terminate()
-        self.qcar.terminate()
+        self.qcar.write(0, 0)
 
     def on_shutdown(self):
         """Stop the vehicle and save data before shutting down."""

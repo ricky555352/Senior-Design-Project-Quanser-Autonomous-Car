@@ -12,26 +12,28 @@ class TrafficLightNode(Node):
     def __init__(self):
         super().__init__('traffic_light_node')
         self.bridge = CvBridge()
-        self.publisher_sign = self.create_publisher(Bool, 'light_status', 10)
+        self.publisher_sign = self.create_publisher(Bool, 'light_status', 1)
         
         # Subscribe to the camera's image topic
         self.subscription = self.create_subscription(
             CompressedImage,
             '/qcar/csi_front',
             self.listener_callback,
-            10
+            1
         )
 
     def listener_callback(self, msg):
         # Convert incoming ROS image to OpenCV format
         cv_image = self.bridge.compressed_imgmsg_to_cv2(msg, desired_encoding='bgr8')
 
-        # Define a specific ROI (Region of Interest) for close-range detection
+        # Define an expanded ROI (Region of Interest) for larger green rectangle
         height, width = cv_image.shape[:2]
-        roi_x_start = int(width * 0.4)  # Adjust these values to narrow the region
-        roi_x_end = int(width * 0.6)
-        roi_y_start = int(height * 0.2)
-        roi_y_end = int(height * 0.5)
+        
+        # Expand the ROI to cover a larger area
+        roi_x_start = int(width * 0.1)  # Start at 10% from the left
+        roi_x_end = int(width * 0.9)    # End at 90% from the left
+        roi_y_start = int(height * 0.05) # Start at 5% from the top
+        roi_y_end = int(height * 0.7)    # End at 70% from the top
         roi = cv_image[roi_y_start:roi_y_end, roi_x_start:roi_x_end]
 
         # Detect traffic light color within the ROI
@@ -42,7 +44,7 @@ class TrafficLightNode(Node):
         light_status.data = detected_red  # True if red light detected, False otherwise
         self.publisher_sign.publish(light_status)
 
-        # Show the ROI with detected bounding box for debugging
+        # Show the expanded ROI with the green rectangle for debugging
         cv2.rectangle(cv_image, (roi_x_start, roi_y_start), (roi_x_end, roi_y_end), (0, 255, 0), 2)
         cv2.imshow("Traffic Light ROI", cv_image)
         cv2.waitKey(1)
@@ -51,7 +53,8 @@ class TrafficLightNode(Node):
         hsv_img = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
 
         # Define a narrow HSV range for detecting the red traffic light
-        hsv_red_lower = (0, 150, 150)
+        # This range is fine-tuned to target only the specific red of traffic lights
+        hsv_red_lower = (0, 180, 150)
         hsv_red_upper = (10, 255, 255)
 
         # Create a mask for red light detection within this HSV range
@@ -60,39 +63,41 @@ class TrafficLightNode(Node):
         # Apply Gaussian blur to reduce noise and smooth the edges of the mask
         blurred_mask = cv2.GaussianBlur(red_mask, (9, 9), 2)
 
-        # Define area threshold for red detection
-        red_area = 300  
+        # Define minimum area threshold for red detection
+        min_red_area = 300  # Adjust based on camera view at 6 inches
 
         # Check if the red mask area is above the threshold
         red_area = cv2.countNonZero(blurred_mask)
-        if red_area < red_area:
+        if red_area < min_red_area:
             # Area too small, likely not the traffic light
             return False
 
-        # Detect circles in the blurred mask
-        circles = cv2.HoughCircles(
-            blurred_mask, 
-            cv2.HOUGH_GRADIENT, 
-            dp=1.2, 
-            minDist=30, 
-            param1=100, 
-            param2=15, 
-            minRadius=5, 
-            maxRadius=50
-        )
+        # Detect contours in the red mask to check for circular shapes
+        contours = cv2.findContours(blurred_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)[-2]
 
         # Initialize red light detection flag
         red_light_detected = False
 
-        # Process detected circles and draw bounding box if a red light is detected
-        if circles is not None:
-            circles = np.round(circles[0, :]).astype("int")
-            for (x, y, radius) in circles:
-                # Draw a bounding box around the detected red circle
-                top_left = (x - radius, y - radius)
-                bottom_right = (x + radius, y + radius)
-                cv2.rectangle(roi, top_left, bottom_right, (0, 0, 255), 2)
-                red_light_detected = True
+        # Process each contour and ensure it is circular
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            perimeter = cv2.arcLength(cnt, True)
+            
+            if perimeter == 0:
+                continue  # Skip invalid contours
+
+            circularity = 4 * np.pi * (area / (perimeter ** 2))
+
+            # Check for high circularity: closer to 1 indicates a circular shape
+            if 0.85 < circularity < 1.15:  # Strict range for circularity to filter out non-circles
+                (x, y), radius = cv2.minEnclosingCircle(cnt)
+                if radius > 5 and radius < 50:  # Check radius range to avoid false positives on large shapes
+                    # Draw a bounding box around the detected red circle
+                    top_left = (int(x - radius), int(y - radius))
+                    bottom_right = (int(x + radius), int(y + radius))
+                    cv2.rectangle(roi, top_left, bottom_right, (0, 255, 0), 2)
+                    red_light_detected = True
+                    break  # Exit after detecting the first valid red circular contour
 
         # Display the ROI for debugging
         cv2.imshow("Red Light Detection within ROI", roi)
