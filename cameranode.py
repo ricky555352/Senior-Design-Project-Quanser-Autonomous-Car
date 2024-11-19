@@ -49,8 +49,8 @@ class CameraNode(Node):
             self.publisher_image.publish(compressed_image_msg)
 
             # Optional: Display the image using OpenCV for testing purposes
-            cv2.imshow("Front Camera", front_image)
-            cv2.waitKey(1)
+            #cv2.imshow("Front Camera", front_image)
+            #cv2.waitKey(1)
 
     def stop_camera(self):
         self.get_logger().info("Shutting down camera...")

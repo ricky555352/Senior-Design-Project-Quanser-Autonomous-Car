@@ -4,6 +4,7 @@ import rclpy
 from rclpy.node import Node
 import cv2
 import numpy as np
+import time
 from std_msgs.msg import Bool
 from sensor_msgs.msg import CompressedImage
 from cv_bridge import CvBridge
@@ -28,9 +29,12 @@ class StopSignNode(Node):
             10
         )
     
+        self.last_detection_time = 0  # Timestamp for the last detection
+        self.detection_delay = 3.0  # Delay in seconds between detections
+        
     def listener_callback(self, msg):
         # Convert the incoming ROS image to OpenCV format
-        self.get_logger().info("Received image for stop sign detection")
+        #self.get_logger().info("Received image for stop sign detection")
         cv_image = self.bridge.compressed_imgmsg_to_cv2(msg, desired_encoding='bgr8')
         
         height, width, _ = cv_image.shape
@@ -51,12 +55,15 @@ class StopSignNode(Node):
         detected = self.detect_stop_sign(roi)
         stop_status = Bool()
         
-        if detected:
-            self.get_logger().info("Stop sign detected!")
-            stop_status.data = True
-        else:
-            self.get_logger().info("No stop sign detected.")
-            stop_status.data = False
+        # Enforce a delay between detections
+        current_time = time.time()
+        if detected and (current_time - self.last_detection_time >= self.detection_delay):
+            stop_status.data = True  # Red light detected
+            self.publisher_sign.publish(stop_status)
+            self.last_detection_time = current_time
+            self.get_logger().info("Stop Sign detected!")
+        elif not detected:
+            stop_status.data = False  # No red light detected
         
         # Publish the stop sign detection result
         self.publisher_sign.publish(stop_status)

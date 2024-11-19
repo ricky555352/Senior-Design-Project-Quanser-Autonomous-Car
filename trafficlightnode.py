@@ -4,6 +4,7 @@ import rclpy
 from rclpy.node import Node
 import cv2
 import numpy as np
+import time
 from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import Bool
 from cv_bridge import CvBridge
@@ -12,16 +13,19 @@ class TrafficLightNode(Node):
     def __init__(self):
         super().__init__('traffic_light_node')
         self.bridge = CvBridge()
-        self.publisher_sign = self.create_publisher(Bool, 'light_status', 1)
+        self.publisher_sign = self.create_publisher(Bool, 'light_status', 10)
         
         # Subscribe to the camera's image topic
         self.subscription = self.create_subscription(
             CompressedImage,
             '/qcar/csi_front',
             self.listener_callback,
-            1
+            10
         )
 
+        self.last_detection_time = 0  # Timestamp for the last detection
+        self.detection_delay = 2.0  # Delay in seconds between detections
+        
     def listener_callback(self, msg):
         # Convert incoming ROS image to OpenCV format
         cv_image = self.bridge.compressed_imgmsg_to_cv2(msg, desired_encoding='bgr8')
@@ -40,8 +44,22 @@ class TrafficLightNode(Node):
         detected_red = self.detect_red_light(roi)
 
         # Publish the light status based on detection
+        '''
         light_status = Bool()
         light_status.data = detected_red  # True if red light detected, False otherwise
+        '''
+        light_status = Bool()
+        
+        # Enforce a delay between detections
+        current_time = time.time()
+        if detected_red and (current_time - self.last_detection_time >= self.detection_delay):
+            light_status.data = True  # Red light detected
+            self.publisher_sign.publish(light_status)
+            self.last_detection_time = current_time
+            self.get_logger().info("Red light detected!")
+        elif not detected_red:
+            light_status.data = False  # No red light detected
+            
         self.publisher_sign.publish(light_status)
 
         # Show the ROI with the green rectangle for debugging
@@ -64,7 +82,7 @@ class TrafficLightNode(Node):
         blurred_mask = cv2.GaussianBlur(red_mask, (9, 9), 2)
 
         # Define minimum area threshold for red detection
-        min_red_area = 300  # Adjust based on camera view for distance
+        min_red_area = 300  # Adjust based on camera view for distance #300 default
 
         # Check if the red mask area is above the threshold
         red_area = cv2.countNonZero(blurred_mask)
@@ -104,7 +122,6 @@ class TrafficLightNode(Node):
         cv2.waitKey(1)
 
         return red_light_detected
-
 
 def main(args=None):
     rclpy.init(args=args)
