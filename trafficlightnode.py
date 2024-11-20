@@ -54,7 +54,7 @@ class TrafficLightNode(Node):
         current_time = time.time()
         if detected_red and (current_time - self.last_detection_time >= self.detection_delay):
             light_status.data = True  # Red light detected
-            self.publisher_sign.publish(light_status)
+            #self.publisher_sign.publish(light_status)
             self.last_detection_time = current_time
             self.get_logger().info("Red light detected!")
         elif not detected_red:
