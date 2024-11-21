@@ -30,7 +30,7 @@ class StopSignNode(Node):
         )
     
         self.last_detection_time = 0  # Timestamp for the last detection
-        self.detection_delay = 3.0  # Delay in seconds between detections
+        self.detection_delay = 6.0  # Delay in seconds between detections
         
     def listener_callback(self, msg):
         # Convert the incoming ROS image to OpenCV format
@@ -58,12 +58,12 @@ class StopSignNode(Node):
         # Enforce a delay between detections
         current_time = time.time()
         if detected and (current_time - self.last_detection_time >= self.detection_delay):
-            stop_status.data = True  # Red light detected
+            stop_status.data = True  # Stop Sign detected
             self.publisher_sign.publish(stop_status)
             self.last_detection_time = current_time
             self.get_logger().info("Stop Sign detected!")
         elif not detected:
-            stop_status.data = False  # No red light detected
+            stop_status.data = False  # No stop sign detected
         
         # Publish the stop sign detection result
         self.publisher_sign.publish(stop_status)

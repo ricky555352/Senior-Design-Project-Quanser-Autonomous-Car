@@ -14,7 +14,6 @@ from std_msgs.msg import Bool
 # To store the x, y, and waypoint data
 DATA_TO_SAVE = []
 
-
 class SpeedController:
     def __init__(self, kp=0, ki=0):
         self.maxThrottle = 0.3
@@ -26,7 +25,6 @@ class SpeedController:
         e = v_ref - v
         self.ei += dt * e
         return np.clip(self.kp * e + self.ki * self.ei, -self.maxThrottle, self.maxThrottle)
-
 
 class SteeringController:
     def __init__(self, waypoints, k=0, cyclic=True):
@@ -69,7 +67,6 @@ class SteeringController:
 
         return np.clip(wrap_to_pi(psi + np.arctan2(self.k * ect, speed)), -self.maxSteeringAngle, self.maxSteeringAngle)
 
-
 class VehicleControlNode(Node):
     def __init__(self, initialPosition, initialOrientation, nodeSequence):
         super().__init__('vehiclecontrol_node')
@@ -78,10 +75,11 @@ class VehicleControlNode(Node):
         self.dt = 0.01  # Control loop frequency
         self.startDelay = 1.0  # Initial delay
         self.v_ref = 0.2  # Desired velocity
-        self.stop_detected = False
-        self.red_light_detected = False
-        self.last_light_change_time = time.time()  # Last state change time for red light
-        self.debounce_time = 0.5  # Time delay to process light changes
+        self.stop_detected = False  # Track if a stop sign is detected
+        self.stop_time = None  # Track the time when the stop sign was detected
+        self.red_light_detected = False  # Track if red light is detected
+        self.debounce_time = 1.0  # Debounce time for red light detection
+        self.last_light_change_time = time.time()  # Last time light state changed
 
         # Speed Controller
         self.speedController = SpeedController(kp=0.3, ki=0.5)
@@ -93,10 +91,12 @@ class VehicleControlNode(Node):
         # Steering Controller
         self.steeringController = SteeringController(waypoints=self.waypointSequence, k=1.5)
 
-        # QCar Interface
+        # QCar Interface with initial position and orientation
         self.qcar = QCar(readMode=1, frequency=20)
         self.ekf = QCarEKF(x_0=np.array([initialPosition[0], initialPosition[1], initialOrientation[2]]))
         self.gps = QCarGPS(initialPose=np.array([initialPosition[0], initialPosition[1], initialOrientation[2]]))
+
+        self.control_timer = self.create_timer(self.dt, self.controlLoop)  # Main control loop
 
         # Subscriber to stop sign detection status
         self.stop_sign_subscriber = self.create_subscription(
@@ -114,8 +114,6 @@ class VehicleControlNode(Node):
             10
         )
 
-        self.control_timer = self.create_timer(self.dt, self.controlLoop)  # Main control loop
-
     def stop_sign_callback(self, msg):
         if msg.data and not self.stop_detected:
             self.get_logger().info("Stop sign detected. Initiating stop sequence.")
@@ -123,9 +121,9 @@ class VehicleControlNode(Node):
             self.timer_start = time.time()
 
     def red_light_callback(self, msg):
-        if msg.data and not self.red_light_detected:
+        self.red_light_detected = msg.data
+        if msg.data:
             self.get_logger().info("Red light detected. Initiating stop sequence.")
-            #self.red_light_detected = True
             status = "red light" if msg.data else "green light"
             self.get_logger().info(f"Traffic light status: {status}")
 
@@ -144,34 +142,37 @@ class VehicleControlNode(Node):
         x, y, th = ekf.x_hat[0, 0], ekf.x_hat[1, 0], ekf.x_hat[2, 0]
         p = np.array([x, y])
         v = qcar.motorTach
-        
-        # Handle stopping for red light
-        if self.red_light_detected:
-            #self.red_light_detected = True
-            self.qcar.write(0, 0)  # Stop the car
-            self.get_logger().info("Red light detected: Stopping the vehicle.")
-            return
-        elif (self.red_light_detected == False):
-            self.red_light_detected = False
-            self.get_logger().info("Resuming for green light.")
+
+        # Retrieve the current waypoint being tracked
+        wp_1 = self.steeringController.wp[:, self.steeringController.wpi % len(self.waypointSequence[0, :])]
+        wp_1_x, wp_1_y = wp_1[0], wp_1[1]
+
+        # Log QCar position and waypoint position
+        DATA_TO_SAVE.append([x, y, wp_1_x, wp_1_y])
 
         # Handle stopping for stop sign
         if self.stop_detected:
             if time.time() - self.timer_start < 3.0:
                 self.qcar.write(0, 0)  # Stop for 3 seconds
                 self.get_logger().info("Stopped for stop sign.")
-                #return
+                return
             else:
                 self.stop_detected = False  # Reset stop sign detection
                 self.get_logger().info("Resuming after stop sign.")
+                
+        # Control the QCar based on the red light status
+        if self.red_light_detected:
+            # Stop the car if red light is detected
+            self.qcar.write(0, 0)
+            self.get_logger().info("Red light detected: Stopping the vehicle.")
+            return
 
-        # Control QCar to follow the waypoints
-        target_speed = self.v_ref
+        target_speed = self.v_ref  # Desired speed
         current_speed = v
         u = self.speedController.update(current_speed, target_speed, self.dt)
         delta = self.steeringController.update(p, th, current_speed)
         self.qcar.write(u, delta)
-        self.get_logger().info("Following waypoint path.")
+        self.get_logger().info("Green light detected: Moving towards waypoint.")
 
     def stop_vehicle(self):
         self.get_logger().info("Stopping the vehicle...")
@@ -188,8 +189,7 @@ class VehicleControlNode(Node):
             writer = csv.writer(file)
             writer.writerow(["x", "y", "wp_1_x", "wp_1_y"])
             writer.writerows(DATA_TO_SAVE)
-        self.get_logger().info("Saved coordinates to CSV file.")
-
+        self.get_logger().info("Saved coordinates to CSV file")
 
 def main(args=None):
     rclpy.init(args=args)
@@ -205,7 +205,8 @@ def main(args=None):
     node = VehicleControlNode(initialPosition=initialPosition, initialOrientation=initialOrientation, nodeSequence=nodeSequence)
 
     try:
-        rclpy.spin(node)
+        while rclpy.ok():
+            rclpy.spin_once(node, timeout_sec=0.1)
     except KeyboardInterrupt:
         node.get_logger().info("Keyboard interrupt detected, shutting down...")
         node.stop_vehicle()
@@ -213,7 +214,6 @@ def main(args=None):
 
     node.destroy_node()
     rclpy.shutdown()
-
 
 if __name__ == '__main__':
     main()
