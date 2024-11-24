@@ -37,6 +37,7 @@ class StopSignNode(Node):
         #self.get_logger().info("Received image for stop sign detection")
         cv_image = self.bridge.compressed_imgmsg_to_cv2(msg, desired_encoding='bgr8')
         
+        # Gets variables for image size
         height, width, _ = cv_image.shape
         
         # Define two ROIs: one on the left and one on the right side of the image
@@ -53,7 +54,7 @@ class StopSignNode(Node):
 
         # Check if a stop sign is detected in the ROI
         detected = self.detect_stop_sign(roi)
-        stop_status = Bool()
+        stop_status = Bool() # Sets stop_status to true or false message
         
         # Enforce a delay between detections
         current_time = time.time()

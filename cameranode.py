@@ -27,18 +27,16 @@ class CameraNode(Node):
         )
 
         # Get the FPS from parameters or default to 30 FPS
-        #self.declare_parameter('fps', 30)
-        #self.fps = self.get_parameter('fps').get_parameter_value().integer_value
-        self.fps = 30
+        self.fps = 30 # Set FPS
         self.dt = 1.0 / self.fps  # Time between frames
 
         # Set up a timer to process the camera feed at the desired frame rate
         self.timer = self.create_timer(self.dt, self.process_camera_feed)
 
     def process_camera_feed(self):
-        # Read from the front camera
-        self.cameras.readAll()
-        front_image = self.cameras.csiFront.imageData
+        # Read from cameras
+        self.cameras.readAll() # Read all cameras
+        front_image = self.cameras.csiFront.imageData # Only read front camera
 
         # Check if the front camera image data is valid
         if front_image is not None and front_image.size > 0:

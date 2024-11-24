@@ -38,14 +38,14 @@ class TrafficLightNode(Node):
         detected_red = self.detect_red_light(roi)
 
         # Publish the light status based on detection
-        light_status = Bool()
+        light_status = Bool() # Allows light_status to be a bool message
         light_status.data = detected_red  # True if red light detected, False otherwise
         
         self.publisher_sign.publish(light_status)
 
         # Show the ROI with detected bounding box for debugging
         cv2.rectangle(cv_image, (roi_x_start, roi_y_start), (roi_x_end, roi_y_end), (0, 255, 0), 2)
-        cv2.imshow("Traffic Light ROI", cv_image)
+        cv2.imshow("Traffic Light ROI", cv_image) # Displays image
         cv2.waitKey(1)
 
     def detect_red_light(self, roi):
